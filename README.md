@@ -1,7 +1,7 @@
 # Phantasm
 Phantasm is a library that has been developed for programmatic testing of Splunk Phantom playbooks. In doing so allowing for test-driven development as users develop playbooks. 
 
-It relies on Django based REST API oh Splunk Phantom to create containers, artifacts, upload files, run playbooks, run individual app actions, promote/demote a case to a container, delete a container and more. It returns the JSON response from each action, allowing the fields to be used in pytest.
+It relies on the Django based REST API in Splunk Phantom to create containers, artifacts, upload files, run playbooks, run individual app actions, promote/demote a case to a container, delete a container and more. It returns the JSON response from each action, allowing the fields to be used in pytest.
 
 Refer to _demo.py_ to showcase the basic functionality of the library, or _test_example.py_ file for a basic example that uses pytest to validate.
 
