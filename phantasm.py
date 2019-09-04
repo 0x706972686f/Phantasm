@@ -208,17 +208,19 @@ class phantasm(object):
         '''
         for count in range(max_attempts):
             post_response = self._sess.get(url)
-            status = post_response.json()['status']
-            if status is 'pending' or status is 'running':
+            status = post_response.json().get("status")
+            count = post_response.json().get("count")
+            if status is in ['pending','running']:
                 time.sleep(interval)
                 continue
-            elif status is 'failed' or status is 'success':
-                app_runs = self._sess.get(url)
-                return app_runs.json()
+            elif status is in ['failed', 'success']:
+                return post_response.json()
+            elif count:
+                return post_response.json()
             else:
                 raise ValueError('Wrong return status: {0}'.format(status))
-        logger.debug("Action is still in {} status, wait timeout.".format(post_response.json()['status']))
-        return None
+                logger.debug("Action is still in {} status, wait timeout.".format(post_response.json()['status']))
+                return None
 
     """
     Container: Functions
