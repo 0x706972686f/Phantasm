@@ -112,6 +112,7 @@ class phantasm(object):
         self._sess.hooks = {'response': self._hook_response}
 
         '''Setting Container Variables'''
+        self._container_id = None
         self._container_name = ""
         self._container_label = ""
         self._source_identifier = ""
@@ -143,12 +144,24 @@ class phantasm(object):
         Can overwrite the __exit__ function to set the container to be resolved, and add a tag of 'tested'
         '''
     """
+    
+    def __repr__(self):
+        '''
+        Overwrite the represent class to return a nicer way of showing the 
+        '''
+        if self._container_id is not None:
+            return 'Phantasm Object with Container ID {}'.format(self._container_id)
+        else:
+            return phantasm.__doc__
 
     def __str__(self):
         '''
         Overwrites the string class to return the documentation regarding the object.
         '''
-        return phantomcontainer.__doc__
+        if self._container_id is not None:
+            return 'Phantasm Object with Container ID {}'.format(self._container_id)
+        else:
+            return phantasm.__doc__
 
     """"
     HTTP: Functions
