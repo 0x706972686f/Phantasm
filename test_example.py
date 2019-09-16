@@ -2,85 +2,69 @@
 File: test_example.py
 
 Description:
-    A very simple test case that creates a container, adds an artifact to that
-    container (which is the details for a new JIRA ticket), then runs a playbook
-    which ensures that the ticket was closed.
+    A very simple test case for creating a JIRA ticket. It completes the following
+    actions:
+    
+    1) Creates a pytest fixture that is an instance of the class.
+    2) It creates a container
+    3) It adds two artifacts to the container, which will be the JIRA ticket information
+    4) It runs a playbook 'Create JIRA ticket' which will create a JIRA ticket based
+       on the artifacts
+    5) Finally it verifies the playbook ran by checking the playbook run data to 
+       confirm the JSON response from JIRA, looking for the field that shows the
+       tickets are open.
 """
 
-import os, sys, csv
+import os
+import sys
+import csv
 import json
+import pytest
 import phantasm
 
 '''Create an instance of Phantasm'''
-def create_phantasm():
-    ph = phantasm.phantasm()
-    return ph
+@pytest.fixture
+def phantasm_instance():
+    return phantasm.phantasm()
 
 '''Creating a Container'''
-def create_container(phantasmobj, name, label):
-    try:
-        c = phantasmobj.create_container(name, label)
-        if c is None:
-            raise phantasm.containerException
-        else:
-            return c
-    except phantasm.containerException:
-        print("Failed to Create the Container")
+@pytest.mark.parametrize("containername,label", [
+  ("container-test1", "test"),
+])
+@pytest.mark.first
+def test_create_container(phantasm_instance, containername, label):
+    assert phantasm_instance.create_container(containername, label).get("id") is not None
 
-'''Adding an artifact to the container'''
-def add_artifact(phantasmobj, cef, name, description, label):
-    try:
-        a = phantasmobj.add_artifact(cef, name, description, label)
-        if a is None:
-            raise phantasm.artifactException
-        else:
-            return a
-    except phantasm.artifactException:
-        print("No Artifact was created")
-
-'''Run a playbook'''
-def run_playbook(phantasmobj, playbook_name, scope):
-    try:
-        p = phantasmobj.run_playbook(playbook_name, scope)
-        if p is None:
-            raise phantasm.playbookException
-        else:
-            return a
-    except phantasm.playbookException:
-        print("The playbook was not executed")
-
-'''The test cases for pytest to validate'''
-def test_utils():
-    new_phantasm = create_phantasm()
-
-    container_name = 'Testing: PyTest Validating Containers'
-    container_label = 'Splunk'
-
-    container = create_container(new_phantasm, container_name, container_label)
-
-    cef = {
+'''Adding two artifacts to the container'''
+@pytest.mark.parametrize("cef,artifactname,description,label", [
+    ({
         'jira_comment': 'This is the comment that would appear in the JIRA ticket',
         'jira_case': 'JIRA-0001',
         'jira_summary': 'TEST_IGNORE: Demonstrating an Artifact',
         'jira_issue_type': 'Malware'
-    }
-    name = 'Demonstration Artifact'
-    description = 'This is a demonstration artifact'
-    label = 'event'
+    },
+    "artifact1","This is a test Artifact","test"),
+     ({
+        'jira_comment': 'This is the comment that would appear in the JIRA ticket',
+        'jira_case': 'JIRA-0001',
+        'jira_summary': 'TEST_IGNORE: Demonstrating an Artifact',
+        'jira_issue_type': 'Malware'
+    },
+    "artifact2","This is a test Artifact","test"),
+])
+@pytest.mark.second
+def test_add_artifact(phantasm_instance, cef, artifactname, description, label):
+    assert phantasm_instance.add_artifact(cef, artifactname, description, label).get("id") is not None
 
-    artifact = add_artifact(new_phantasm, cef, name, description, label)
+'''Run a playbook'''
+@pytest.mark.parametrize("playbook_name,scope", [
+    ("phantom-playbook/Create JIRA Ticket","new"),
+])
+def test_run_playbook(phantasm_instance, playbook_name, scope):
+    assert phantasm_instance.run_playbook(playbook_name, scope).get("status") == "success"
 
-    playbook_name = 'phantom-playbook/Create JIRA Ticket'
-    scope = 'new'
-
-    playbook = run_playbook(new_phantasm, playbook_name, scope)
-    detailed_outcome = new_phantasm.get_playbook_run_data()
-
-    #assert new_phantasm.container_id not None
-    assert container.get("id") not None
-    #assert new_phantasm.artifact_id not None
-    assert artifact.get("id") not None
-    #assert new_phantasm.get_playbook_results().get("status") is "success"
-    assert playbook.get("status") is "success"
-    #asset new_phantasm.get_playbook_run_action_status(action="get ticket")['data'][0]['result_data'][0]['data'][0]['status'] is 'closed'
-    assert detailed_outcome['data'][0]['result_data'][0]['data'][0]['status'] is 'closed'
+'''Get the Detailed JSON for conclusive testing'''
+@pytest.mark.last
+def test_playbook_run_data(phantasm_instance):
+    detailed_outcome = phantasm_instance.get_playbook_run_data()
+    assert detailed_outcome['data'][0]['result_data'][0]['data'][0]['status'] == 'open'
