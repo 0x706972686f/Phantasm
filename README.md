@@ -44,5 +44,6 @@ Each function is documented for further information:
  - **get_jira_ticket_data** - Runs an action to retrieve all JIRA tickets.
 
 ### Changelog:
+ - **2019-09-16**: Re-wrote pytest example implementing fixtures, parameters and ordering.
  - **2019-09-04**: Minor fix to wait() function
  - **2019-07-21**: Initial Git Commit (untested)
