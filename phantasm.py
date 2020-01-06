@@ -17,8 +17,16 @@ Installation:
 
 Future Planned Improvements:
     - Finish modifying conftest.py to use webhooks to post the outcome somewhere
+    - Provide a function to list the users, using the following API endpoint:
+        /rest/ph_user?_filter_type__in=["normal","automation"]&page_size=0
+    - Provide a function to list custom lists, using the following API endpoint:
+        /rest/decided_list
 
 Changelog:
+    2019-11-15  -   Added additional functions that help with identifying playbooks
+                    impacted by system failures, provide further information
+                    regarding playbooks, and can be used to work backwards (from
+                    a playbook identifying the container associated and more).
     2019-06-30  -   Re-engineered the entire thing, including converting it from
                     standalone functions to a class, including custom exceptions
                     simplifying the code and documenting it.
@@ -77,6 +85,7 @@ Container Functions:
     create_container                    - Creates a new container
     update_container_status             - Updates the container status
     update_container_tags               - Adds a tag to the container
+    get_last_created_container          - Identifies the most recently created container
     get_container_artifacts             - Retrieves the list of artifacts currently in the container
     promote_container_to_case           - Promotes the current container to a case
     demote_case_to_container            - Demotes the current case to a container
@@ -84,16 +93,28 @@ Container Functions:
 
 Artifact Functions:
     add_artifact                        - Adds an artifact to a container
-    upload_file_to_phantom              - Uploads a file to a container
+    get_last_created_artifact           - Identifies the most recently created artifact
+
+File Functions:
+    upload_file_to_phantom              - Uploads a file to a container    
 
 Playbook Functions:
     run_playbook                        - Runs a playbook against a container
     get_playbook_results                - Retrieves the status of the playbook
     get_playbook_action_results         - Retrieves the status of the last run action in the playbook
+    get_playbook_information            - Retrieves the information relating to a playbook
+    get_last_run_playbook_information   - Retrieves the information relating to the last executed playbook
+    alter_playbook_active_state         - Activates/Deactives a playbook
+    get_system_failure_impacted_playbooks - Identifies playbooks that didn't execute due to a system failure
+    get_system_failure_pending_playbooks - Identifies playbooks that were pending execution before a system failure
+
+Action Functions:
     get_application_id                  - Retrieves an application id
     run_action                          - Run an action
     get_action_results                  - Retrieve the results of an action
     get_action_run_data                 - Retrieve the data of the action
+
+Misc Functions:
     get_jira_ticket_data                - Runs an action to retrieve all JIRA tickets.
 """
 class phantasm(object):
@@ -112,7 +133,6 @@ class phantasm(object):
         self._sess.hooks = {'response': self._hook_response}
 
         '''Setting Container Variables'''
-        self._container_id = None
         self._container_name = ""
         self._container_label = ""
         self._source_identifier = ""
@@ -144,24 +164,12 @@ class phantasm(object):
         Can overwrite the __exit__ function to set the container to be resolved, and add a tag of 'tested'
         '''
     """
-    
-    def __repr__(self):
-        '''
-        Overwrite the represent class to return a nicer way of showing the 
-        '''
-        if self._container_id is not None:
-            return 'Phantasm Object with Container ID {}'.format(self._container_id)
-        else:
-            return phantasm.__doc__
 
     def __str__(self):
         '''
         Overwrites the string class to return the documentation regarding the object.
         '''
-        if self._container_id is not None:
-            return 'Phantasm Object with Container ID {}'.format(self._container_id)
-        else:
-            return phantasm.__doc__
+        return phantomcontainer.__doc__
 
     """"
     HTTP: Functions
@@ -177,7 +185,7 @@ class phantasm(object):
         post_response.raise_for_status()
         logger.debug("Request: {0}\nResponse: {1}".format(post_response.url, post_response.json()))
 
-    def _url(self, url_path, filter=[]):
+    def _url(self, url_path, filter=[], page_number=0, page_size=0):
         '''
         Function: _url
 
@@ -191,6 +199,7 @@ class phantasm(object):
         Returns:
             (str)                           - The string for the URL
         '''
+        url_path += '?page={}&page_size={}'.format(page_number,page_size)
         if filter:
             """
             Add query string for filtered actions
@@ -198,10 +207,10 @@ class phantasm(object):
             """
             filter_query_string="?"
             for action in filter:
-                filter_query_string += '_filter_{}&'.format(action)
-            filter_query_string += "include_expensive"
+                filter_query_string += '&_filter_{}'.format(action)
         else:
             filter_query_string=""
+        url_path += '&include_expensive'
         return self._phantom_server_address + url_path + filter_query_string
 
     def _wait(self, url, interval=1, max_attempts=10):
@@ -222,11 +231,14 @@ class phantasm(object):
         for count in range(max_attempts):
             post_response = self._sess.get(url)
             status = post_response.json().get("status")
+            success = post_response.json().get("success")
             count = post_response.json().get("count")
-            if status is in ['pending','running']:
+            if status is in ['failed', 'success', 'new', 'closed', 'open']:
+                return post_response.json()
+            elif status is in ['pending', 'running'']:
                 time.sleep(interval)
                 continue
-            elif status is in ['failed', 'success']:
+            elif success:
                 return post_response.json()
             elif count:
                 return post_response.json()
@@ -329,6 +341,26 @@ class phantasm(object):
         post_data['tags'] = tags
         url = self._url('container/{}'.format(container_id))
         post_response = self._sess.post(url)
+
+        return post_response.json()
+
+    def get_last_created_container(self, container_tag=""):
+        '''
+        Function: get_last_created_container
+
+        Description:
+        Identifies the most recently created container. You can provide the string for the container tag to identify more specific containers.
+
+        Args:
+            (optional) container_tag (str)  - The tag of a container to filter on.
+
+        Returns:
+            Response (json)                 - The JSON data of the action
+        '''
+        filters = [] 
+        filters.append('tags__icontains="{}"&sort=id&order=desc'.format(container_tag))
+        url = self._url('container',page_size=1,filters=filters)
+        post_response = self._sess.get(url)
 
         return post_response.json()
 
@@ -548,6 +580,27 @@ class phantasm(object):
 
         return post_response.json()
 
+    
+    def get_last_created_artifact(self, artifact_tag=""):
+        '''
+        Function: get_last_created_artifact
+
+        Description:
+        Identifies the most recently created artifact. You can provide the string for the artifact tag to identify more specific artifacts.
+
+        Args:
+            (optional) artifact_tag (str)   - The tag of a artifact to filter on.
+
+        Returns:
+            Response (json)                 - The JSON data of the action
+        '''
+        filters = [] 
+        filters.append('tags__icontains="{}"&sort=id&order=desc'.format(container_tag))
+        url = self._url('artifact',page_size=1,filters=filters)
+        post_response = self._sess.get(url)
+
+        return post_response.json()
+
     """
     Artifact: Setting and Getting Variables
     """
@@ -693,7 +746,7 @@ class phantasm(object):
         if not playbook_id:
             playbook_id = self._playbook_run_id[-1]
 
-        url = self._url('playbook_run/{}').format(playbook_id)
+        url = self._url('playbook_run/{}'.format(playbook_id))
         get_response = self._sess.get(url)
 
         return get_response.json()
@@ -728,6 +781,147 @@ class phantasm(object):
             return self._wait(url, interval, max_attempts)
         else:
             return post_response.json()
+
+    def get_playbook_information(self,playbook_name=""):
+        '''
+        Function: get_playbook_information
+
+        Description:
+        Returns all of the information relating to a playbook, including the container ID that the playbook ran against.
+
+        Args:
+            (optional) playbook_name (str) - The name of the playbook to return the information of.
+
+        Returns:
+            Response (json)                - The JSON data of the action
+        '''
+        if not playbook_name:
+            playbook_name = self._playbook_name
+        filters = []
+        filters.append('name__icontainers="{}"&order=desc'.format(playbook_name))
+        url = self._url('playbook_run',page_size=1,filters=filters)
+        post_response = self._sess.get(url)
+        return post_response.json()
+
+    def get_last_run_playbook_information(self,container_id=None,playbook_name=None,wait=True,interval=1,max_attempts=10):
+        '''
+        Function: get_last_run_playbook_information
+
+        Description:
+        Returns all of the information relating to the last executed playbook. It can be filtered to the last run playbook against a container, the last run playbook based by name or just the last run playbook.
+
+        Args:
+            (optional) container_id (str)  - The Container ID to use for filtering the playbook.
+            (optional) playbook_name (str) - The name of the playbook to return the information of.
+
+        Returns:
+            Response (json)                - The JSON data of the action
+        '''
+        filters = []
+        if container_id:
+            filters.append('container_id="{}"&order=desc'.format(container_id))
+            url = self._url("playbook_run",page_size=1,filters=filters)
+            post_response = self._sess.get(url)
+            if wait:
+                return self._wait(url, interval, max_attempts)
+            else:
+                return post_response.json()
+        elif playbook_name:
+            filters.append('message__icontains="{}"&order=desc'.format(playbook_name))
+            url = self._url("playbook_run",page_size=1,filters=filters)
+            post_response = self._sess.get(url)
+            if wait:
+                return self._wait(url, interval, max_attempts)
+            else:
+                return post_response.json()
+        else:
+            url = self._url("playbook_run",page_size=1,filters=filters)
+            post_response = self._sess.get(url)
+            if wait:
+                return self._wait(url, interval, max_attempts)
+            else:
+                return post_response.json()
+
+    def alter_playbook_active_state(self, playbook_id=None, active=False, cancel_runs=False):
+        '''
+        Function: alter_playbook_active_state
+
+        Description:
+        Enables the playbook to be active or inactive. An active playbook will automatically monitor a label and trigger when an event is supplied on that label.
+
+        Args:
+            (optional) playbook_id (str)   - The Phantom Playbook ID to run against, by default will run against the last run playbook.
+            (optional) active (bool)       - Whether to set the playbook as active (True), or inactive (False)
+            (optional) cancel_runs (bool)  - Whether to cancel any existing playbook executions that were pending
+
+        Returns:
+            Response (json)                - The JSON data of the action
+        '''
+        if playbook_id is None:
+            playbook_id = self._playbook_run_id[-1]
+
+        post_data = {}
+        post_data['active'] = active
+        post_data['cancel_runs'] = cancel_runs
+
+        url = self._url("playbook/{}".format(playbook_id))
+        post_response = self._sess.post(url, json=post_data)
+
+        return post_response.json()
+
+    def get_system_failure_impacted_playbooks(self,start_date=None,end_date=None):
+        '''
+        Function: get_system_failure_impacted_playbooks
+
+        Description:
+        Identifies playbooks that didn't complete executing due to a system failure in Phantom.
+            /rest/playbook_run?page_size=0&_filter_status="failed"&sort=id&order=desc&_filter_message__contains="system/daemon start"&_filter_create_time__range("2019-03-11","2013-04-11")
+
+        Args:
+            (optional) start_date (str)    - The starting date to begin filtering the playbooks by
+            (optional) end_date (str)      - The end date to filter the playbooks by
+
+        Returns:
+            Response (json)                - The JSON data of the action
+        '''
+        filters = []
+        filters.append('status="failed"&sort=id&order=desc')
+        filters.append('message__contains="system/daemon start"')
+        if start_date and end_date:
+            filters.append('create_time__range("{}","{}")'.format(start_date,end_date))
+        
+        url = self._url("playbook_run",page_size=0,filters=filters)
+        post_response = self._sess.get(url)
+
+        return post_response.json()    
+
+        r = self.query(query_type="playbook_run",page_size=0,filters=filters,wait=False)
+
+    def get_system_failure_pending_playbooks(self,start_date=None,end_date=None):
+        '''
+        Function: get_system_failure_impacted_playbooks
+
+        Description:
+        Identifies playbooks that were pending execution, but did not get to begin due to a failure in Phantom. These playbooks never would have executed post-recovery.
+            /rest/container?page_size=0&sort=id&order=desc&_filter_playbookrun__container__isnull=True&_filter_create_time__range("2019-03-11","2019-04-11")0
+
+        Args:
+            (optional) start_date (str)    - The starting date to begin filtering the playbooks by
+            (optional) end_date (str)      - The end date to filter the playbooks by
+
+        Returns:
+            Response (json)                - The JSON data of the action
+        '''
+        filters = []
+        filters.append('playbookrun__container__isnull=True&sort=id&order=desc')
+        if start_date and end_date:
+            filters.append('create_time__range("{}","{}")'.format(start_date,end_date))
+        url = self._url("container",page_size=0,filters=filters)
+        post_response = self._sess.get(url)
+
+        return post_response.json()    
+
+        r = self.query(query_type="playbook_run",page_size=0,filters=filters,wait=False)     
 
     """
     Playbooks: Setting and Getting Variables
